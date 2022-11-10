@@ -1,0 +1,108 @@
+#1- Check if the files are healthy (Checksum, Extension) on the source directory.
+#Check if Process is running, Kill it
+
+$TimeStamp = [datetime]::Now.ToString("MM-dd-yyy_HHmm")
+Start-Transcript -Path C:\SyncReports\Logs_$TimeStamp.txt
+
+#Generate report
+$Report = [System.Collections.Generic.List[Object]]::new()
+
+$ProcessName = 'OneDrive'
+$Process = Get-Process -Name $ProcessName -ErrorAction Ignore
+If($Process){
+    Write-Host -f Red "Stopping $ProcessName temporarily..." 
+   Stop-Process -Id $Process.Id -Force}
+   else{write-host -f DarkRed $($ProcessName) "Process is not running" }
+
+   $SourcePath = 'C:\BACKUP'
+   $TargetPath = 'C:\ONEDRIVE\'
+
+#Save paths into variables
+$Source = Get-ChildItem -Path $SourcePath -Recurse ##/[IO.Path]::GetFullPath($Sourcepath, (Get-Location -PSProvider FileSystem).ProviderPath)
+$Target = Get-ChildItem -Path $TargetPath -Recurse ##/[IO.Path]::GetFullPath($TargetPath, (Get-Location -PSProvider FileSystem).ProviderPath)
+
+
+#Check if path exists
+If ({Test-Path $Source -and Test-Path $Target}){
+    $SourceCount = $Source.Count
+    $TargetCount = $Target.Count
+        if ($TargetCount -eq $SourceCount){
+            Write-Host -f Green "There is $($SourceCount) files in the $SourcePath and $($TargetCount) in the $TargetPath files" }
+                else {
+                    Write-Host -f Yellow "There is $($SourceCount) files in the $SourcePath and $($TargetCount) in the $TargetPath files" }
+                }
+
+    #Check and verify files authenticity
+        Foreach ($File in $Source){
+            #$SourceHash = Get-FileHash -Path $SourceFilePath
+            $SourceFilePath = $file.FullName
+            $SourceFileName = $File.Name
+
+                #Check if Target folder exists copy files, if not create it
+                foreach($Targetfolder in $Target){
+
+                    $TargetDir = $Target.directoryname
+                        if(Test-Path $TargetDir){
+                            
+                            $i = 0
+                            if(($TargetFilePath -eq '$null') -or ($SourceHash.Hash -eq $TargetHash.hash)){
+                
+                                #2- Copy those files/folders to the destination (Onedrive).
+                                Try{
+                                        $i++
+                                        $copy = Copy-Item -Path $SourceFilePath -Destination $TargetDir -Force
+                                        Write-Host -f Green "Source $Sourcefilename is healthy and copying... $($i)/$($Source.Count) "
+                                    
+                                }
+                                catch {
+                                    Write-Host -f Red "File $SourceFileName couldn't be copied :$($copy.Exception.Message)" 
+                            
+                                    }
+                        else{
+                            write-host -f red "$SourcePath doesn't exist, creating it.. "
+                            Copy-Item -Path $SourcePath -Destination $TargetPath
+                        }
+                            Foreach($TargetFile in $Target){
+                        
+                                #$TargetHash = Get-FileHash -Path $targetFile.FullName
+                                $TargetFilePath = $Targetfile.FullName
+                        
+                                   
+                                #3- Launches Onedrive, to sync (waits about 30-60 mins). 
+                                $OneDriveStart = Start-Process -FilePath "C:\Users\Trams\AppData\Local\Microsoft\OneDrive\OneDrive.exe" -WindowStyle Hidden
+                                Start-Sleep -Seconds 30
+
+                    Else{
+                        Write-host -f Red "$($Source) has been corrupted or Encrypted" 
+                        #Send-MailMessage -From "admin@domain.com" -To "support@domain.com" -Subject "Files have changed!!" -SmtpServer smtp.domain.net -Priority High
+
+                        }
+                        }             
+                         #4- Kill onedrive from task manager. (stop syncing anything) 
+                         $OneDriveEnd = Get-Process -Name $ProcessName -ErrorAction ignore
+                         If($OneDriveEnd){
+                         Write-Host -f Red "Stopping OneDrive Until next sync..." $Process.Name
+                         Stop-Process -Id $OneDriveEnd.Id -Force
+
+                         }
+                    }
+                
+                         $ReportLine = [PSCustomObject][Ordered]@{
+                            DateandTime                 = $TimeStamp
+                            SourceFilePath              = $SourceFilePath
+                            SourceHash                  = $Sourcehash.hash
+                            TargetFilePath              = $TargetFilePath
+                            TargetHash                  = $TargetHash.hash
+                            OnedriveInitialState        = $Process.StartTime
+                            OneDriveTotalRunTime        = $OneDriveStart.TotalProcessorTime
+                            #$OneDriveEndState           = $OneDriveEnd.ExitTime
+                            Error                       = $Copy.Exception.Message
+                            }
+                            
+                            $Report.Add($ReportLine)
+                        }
+                    Stop-Transcript
+                    Write-Host ("{0} Files processed" -f $Source.count)
+
+                    $Report | Out-GridView
+                    $Report | Export-Csv -NoTypeInformation C:\SyncReports\OnedriveHealthCheckReport_$TimeStamp.csv
