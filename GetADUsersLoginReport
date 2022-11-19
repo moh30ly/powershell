@@ -1,0 +1,58 @@
+#Reporting successful Logins and locked users
+
+$TimeStamp = ([datetime]::Today).ToString("MM-dd-yyyy")
+
+#Start-Transcript -Path C:\SyncReports\Logs\Logs_$Now.txt
+
+#Generate report
+$Report = [System.Collections.Generic.List[Object]]::new()
+
+#$CSVFile = Import-Csv "C:\SyncReports\Raw\ToUseLater_11-15-2022.csv"
+$Users = Get-ADUser -Filter * -SearchBase 'DC=mydomain,DC=net' -Properties *  -ResultSetSize 100 | where {($_.Enabled -eq 'True') -and ($_.Displayname -notlike 'Health*')}
+$DCS = (Get-ADDomainController -Filter *).Hostname
+
+    foreach ($User in $Users){
+        
+        $UID = $User.UPN
+        $SAM = $User.SamAccountName
+        $UPN = $User.UserPrincipalName
+            
+        $Event = foreach ($DC in $DCS){
+                Get-WinEvent -FilterHashtable @{ logname = 'Security'; id = 4776 } -ComputerName $DC -MaxEvents 1 | Select-Object TimeCreated,`
+                @{ Name='TargetUserName'; Expression={$_.Properties[1].value}},`
+                @{ Name='LogonMachine'; Expression={$_.Properties[2].value}},`
+                @{ Name='Status'; Expression={$_.Properties[3].value -replace "::ffff:"}} | Where {$_.TargetUserName -eq $UPN}
+                }
+
+            if($User.LockedOut){
+            Unlock-ADAccount -Identity $User.UserAccountName -WhatIf
+            Write-Host -f Green $($User.DisplayName) "User was locked, Unlocking account..."
+             
+                          }
+ 
+                 else {
+                        write-host -f DarkGreen -BackgroundColor white "$($User.DisplayName) is not locked"
+                        }
+
+         $ReportLine = [PSCustomObject][Ordered]@{
+             ReportedUser              = $User.DisplayName
+             UserIsLocked              = $User.LockedOut
+             LogonMachineName          = $Event.LogonMachine
+             LastFailureLogonPort      = $Event.Port
+             Time                      = $Now
+             UPN                       = $User.UserPrincipalName
+             LastLogonDate             = $User.Lastlogondate            
+             }
+             $Report.Add($ReportLine)
+        
+}
+
+$MailBody = "
+            <html><body>
+            <font color='006400'>  `
+            Attached the user logon report for today $TimeStamp...  `
+		.</font>
+            <body><html>
+            "
+
+$Report |
