@@ -1,0 +1,53 @@
+#Report NTLM Authentication Failure for users
+$ReportTime = ([datetime]::Today).ToString("MM-dd-yyyy")
+
+#Generate report
+$Report = [System.Collections.Generic.List[Object]]::new()
+
+
+$LockedAccount = (Search-ADAccount -LockedOut -UsersOnly)
+$i = 0
+foreach ($User in $LockedAccount){
+            
+            $i ++
+            Write-Progress -Activity "Gathering Logon info" -Status "Checking Login info for: $($User.Name)" -PercentComplete (($i / ($LockedAccount | Measure-Object).Count) * 100) 
+            if($User.LockedOut){
+           
+              
+              $Event = Get-WinEvent -FilterHashtable @{ logname = 'Security'; id = 4740 } -MaxEvents 500 | Select-Object TimeCreated,
+                @{ Name='TargetUserName'; Expression={$_.Properties[0].value}},
+                @{ Name='LogonMachine'; Expression={$_.Properties[1].value}} | Where {$_.TargetUserName -eq $User.SamAccountName}
+                }
+            
+         $ReportLine = [PSCustomObject][Ordered]@{
+             Count                     = $i
+             ReportedUser              = $User.Name
+             UPN                       = $User.UserPrincipalName
+             UserIsLocked              = $User.LockedOut
+             LastLogonDate             = $user.Lastlogondate
+             MachineName                 = $Event.LogonMachine -join ','
+             'Access Failure Time'     = $Event.TimeCreated -join ','
+             'Report Date'             = $ReportTime
+             }
+             $Report.Add($ReportLine) 
+ }
+
+ $MailBody = "
+            <html><body>
+            <font color='006400'> Dear Team, `
+            Please find attached a report of all locked out users including machine used for the login ... `
+            If any issue you can report it via the ticketing system.</font>
+            <body><html>
+            "
+
+ #Eexport in CSV
+ $Report | Export-csv "C:\Reports\LockOutReport_$ReportTime.cscv" -NoTypeInformation
+
+  #Eexport in Excel Format
+ $Report | Export-Excel "C:\Reports\LockOutReport_$ReportTime.xlsx" -WorksheetName LogonFailure -TableName LogonFailure -AutoSize
+
+ $Exported = "C:\Reports\LockOutReport_$ReportTime.xlsx"
+
+$CC = @('User2@domain.com')
+#
+Get-ChildItem $Exported | send-mailmessage -from "system@domain.com" -to "user1@domain.com" -cc $cc -subject "Users LockOut Report $ReportTime" -body "$MailBody" -Priority High -smtpServer relay.domain.com -BodyAsHtml
